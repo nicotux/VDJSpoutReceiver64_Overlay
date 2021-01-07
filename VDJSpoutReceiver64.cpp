@@ -288,17 +288,17 @@ bool SpoutReceiverPlugin::UpdateVertices()
 
 	vertices[1].colour = color;
 	vertices[1].x = (FLOAT)pos_width + pos_x*2;
-	vertices[1].y = (FLOAT)pos_height + pos_y;
+	vertices[1].y = (FLOAT)pos_height + pos_y*2;
 	vertices[1].z = 0.0f;
 
 	vertices[2].colour = color;
 	vertices[2].x = pos_x;// 0;
-	vertices[2].y = (FLOAT)pos_height + pos_y;
+	vertices[2].y = (FLOAT)pos_height + pos_y*2;
 	vertices[2].z = 0.0f;
 
 	vertices[3].colour = color;
 	vertices[3].x = 1+pos_x;// 1;
-	vertices[3].y = (FLOAT)pos_height + pos_y;
+	vertices[3].y = (FLOAT)pos_height + pos_y*2;
 	vertices[3].z = 0.0f;
 
 	vertices[4].colour = color;
