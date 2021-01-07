@@ -1,7 +1,7 @@
 #ifndef __spoutReceiverPlugin__
 #define __spoutReceiverPlugin__
 
-#include "stdafx.h"
+//#include "stdafx.h"
 #include "vdjVideo8.h"
 #include "vdjPlugin8.h"
 
