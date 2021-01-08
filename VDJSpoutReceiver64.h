@@ -69,6 +69,7 @@ private:
 	char g_SenderName[256]; // The sender name
 	unsigned int g_SenderWidth; // Width and height of the sender detected
 	unsigned int g_SenderHeight;
+	DWORD g_SenderFormat;
 
 	float g_position[4] = { 0.0f,0.0f,1.0f,1.0f }; // Render size & position
 

@@ -193,6 +193,7 @@ SpoutReceiverPlugin::SpoutReceiverPlugin()
 	g_SenderName[0] = 0;
 	g_SenderWidth = 0;
 	g_SenderHeight = 0;
+	g_SenderFormat = 0;
 	bSpoutInitialized = false;
 	bSpoutPanelOpened = false;
 	bSpoutPanelActive = false;
@@ -241,8 +242,10 @@ HRESULT __stdcall SpoutReceiverPlugin::OnGetPluginInfo(TVdjPluginInfo8 *infos)
 	infos->Description = (char*)"Receives frames from a Spout Sender\nas a visualisation plugin\nSpout : http://Spout.zeal.co/";
 	infos->Version = (char *)"v2.01n";
     infos->Bitmap = NULL;
-	infos->Flags = VDJFLAG_VIDEO_OVERLAY | VDJFLAG_VIDEO_OUTPUTRESOLUTION;
-
+//	if (deck == 0)
+		infos->Flags = VDJFLAG_VIDEO_OVERLAY | VDJFLAG_VIDEO_OUTPUTRESOLUTION;
+//	else
+//		infos->Flags = VDJFLAG_VIDEO_VISUALISATION | VDJFLAG_VIDEO_OUTPUTRESOLUTION;
     return NO_ERROR;
 }
 
@@ -440,41 +443,14 @@ HRESULT __stdcall SpoutReceiverPlugin::OnDeviceClose()
 	// Re-init does not seem to affect it
 
 	bIsClosing = true; // It is closing to don't do anything in draw
-	/*
-	if (pVertexBuffer)
-	{
-		pVertexBuffer->Release();
-		pVertexBuffer = nullptr;
-	}
-	if (pPixelShader)
-	{
-		pPixelShader->Release();
-		pPixelShader = nullptr;
-	}
-	if (pSRView)
-	{
-		pSRView->Release();
-		pSRView = nullptr;
-	}
-	if (g_pTexture)
-	{
-		g_pTexture->Release();
-		g_pTexture = nullptr;
-	}
-	if (pImmediateContext)
-	{
-		pImmediateContext->Release();
-		pImmediateContext = nullptr;
-	}
-	pDevice = nullptr;
-	*/
+
 	// Release everything
-	
 	SafeRelease(&g_pTexture);
 	SafeRelease(&g_pSharedTexture);
 	g_SenderName[0] = 0;
 	g_SenderWidth = 0;
 	g_SenderHeight = 0;
+	g_SenderFormat = 0;
 	g_dxShareHandle = NULL;
 	frame.CloseAccessMutex();
 	frame.CleanupFrameCount();
@@ -497,6 +473,7 @@ ULONG __stdcall SpoutReceiverPlugin::Release()
 	g_SenderName[0] = 0;
 	g_SenderWidth = 0;
 	g_SenderHeight = 0;
+	g_SenderFormat = 0;
 	frame.CloseAccessMutex();
 	frame.CleanupFrameCount();
 	bSpoutInitialized = false;
@@ -605,11 +582,13 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 		}
 
 		// Check here for sender size changes to resize the local texture
-		if (g_SenderWidth != senderwidth || g_SenderHeight != senderheight) {
+		// or create one if it does not exist yet
+		if (g_pTexture || g_SenderWidth != senderwidth || g_SenderHeight != senderheight || g_SenderFormat != g_dwFormat) {
 
 			// Save the sender's width and height to use as necessary
 			g_SenderWidth = senderwidth;
 			g_SenderHeight = senderheight;
+			g_SenderFormat = g_dwFormat;
 
 			// Release any existing shared texture pointer
 			// so it can be created again from the new share handle
@@ -647,7 +626,7 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 
 		// Set up the receiver if not initialized yet
 		if (!bSpoutInitialized) {
-			// printf("set up receiver %s, %dx%d\n", g_SenderName, g_SenderWidth, g_SenderHeight);
+			// printf("set up receiver %s, %dx%d (%d)\n", g_SenderName, g_SenderWidth, g_SenderHeight, g_dwFormat);
 			// The local texture will have been created on size change
 			// Create a named sender mutex for access to the shared texture
 			frame.CreateAccessMutex(g_SenderName);
