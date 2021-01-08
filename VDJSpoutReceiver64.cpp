@@ -66,6 +66,40 @@
 //				   Only fetch VDJ device/context on device creation
 //				   Create shader resource view with texture instead of every frame
 //		06.01.21 - Add Deck specific name & loopback prevention
+//		06.01.21 - Credit : Scott Bye (https://github.com/SBDJUK)
+//				   Pixel shader and new render method created to resolve
+//				   VirtualDJ resolution change problems.
+//				   64bit for 2.007 VS2017 /MT - Version 2.02
+//				   GitHub release v2005
+//		07.01.21 - SBDJUK : 
+//				     Add SafeRelease() 
+//				     Create sender shared texture pointer only on change
+//				     Fix the resizing/full screen issue
+//				   Clean up a bit and add some logs
+//				   Change all "g_" to "m_"
+//				   m_pVertexBuffer, m_pPixelShader, m_pImmediateContext, m_pVDJdevice
+//				   Release shared texture pointer on sender re-size
+//				   Remove context flush after shared texture copy to local texture
+//				   64bit for 2.007 VS2017 /MT - Version 2.03
+//				   GitHub release v2006
+//		07.01.21 - Re-introduced info flag "VDJFLAG_VIDEO_VISUALISATION" due to typo
+//				   Fixed ststr sender name compare
+//				   64bit for 2.007 VS2017 /MT - Version 2.04
+//		08.01.21 - Fix missing VDJFLAG_VIDEO_VISUALISATION typo - again
+//				   Remove debugging console window
+//				   Introduce changes by Nicotux (https://github.com/nicotux/VDJSpoutReceiver64_Overlay)
+//				     Add Deck specific name & loopback prevention
+//				   64bit for 2.007 VS2017 /MT - Version 2.05. GitHub binary updated.
+//		08.01.21 - Fix master display on/off problem
+//				   OnDeviceClose is called but not OnDeviceInit
+//				   Create InitializeDraw function
+//				   Re-organise
+//				   Version 2.06. GitHub binary updated.
+//		08.01.21 - Adapt receieved texture and shader reource view to sender format
+//				   Allow for DX9 formats D3DFMT_A8R8G8B8 and D3DFMT_X8R8G8B8
+//				   Version 2.07. GitHub binary updated.
+//		08.01.21 - Release local texture for user selection
+//				   Version 2.08. GitHub binary updated.
 //
 //		------------------------------------------------------------
 //
@@ -90,6 +124,16 @@
 #include "PixelShader.h"
 #include <string>
 #include <array>
+
+template <class T> void SafeRelease(T** ppT)
+{
+	if (*ppT)
+	{
+		(*ppT)->Release();
+		*ppT = NULL;
+	}
+}
+
 
 struct D3DXCOLOR
 {
@@ -152,6 +196,8 @@ SpoutReceiverPlugin::SpoutReceiverPlugin()
 	bSpoutInitialized = false;
 	bSpoutPanelOpened = false;
 	bSpoutPanelActive = false;
+	g_ShExecInfo = { 0 };
+
 
 	bSpoutOut = false; // toggle for plugin start and stop
 	bIsClosing = false; // plugin is not closing
@@ -172,12 +218,14 @@ SpoutReceiverPlugin::~SpoutReceiverPlugin()
 HRESULT __stdcall SpoutReceiverPlugin::OnLoad()
 {
 	double query = nan(""); // NAN;
+
 	// The deck the plugin was loaded
 	// is it a standard one ? the master one ? yes master, no, standard, else it is special one or fail
 	deck = (S_OK == GetInfo("get_plugindeck", &query)) ? (int)query : MININT;
+
 	// Create a sender name not to connect to
-	sprintf_s(g_noReceiveName, 256, "VDJSpoutSender64 %s%s", (deck == 0) ? "" : "Deck ", (deck <= 0 ? (deck >= -3 ? std::array <std::string, 4> { "master", "sampler", "mic", "aux" }.at(-(int)deck) : std::to_string((int)deck)) : std::to_string((int)deck)).c_str()); // add deck n
-	sprintf_s(g_ReceiverName, 256, "VDJSpoutReceiver64 %s%s", (deck == 0) ? "" : "Deck ", (deck <= 0 ? (deck >= -3 ? std::array <std::string, 4> { "master", "sampler", "mic", "aux" }.at(-(int)deck) : std::to_string((int)deck)) : std::to_string((int)deck)).c_str()); // add deck n
+	sprintf_s(g_noReceiveName, 256, "VDJSpoutSender64 %s", deck_name().c_str()); // add deck n
+	sprintf_s(g_ReceiverName, 256, "%s", (GetDLLName() + " " + deck_name()).c_str());
 
 	DeclareParameterButton(&SelectButton, 1, "Sender", "Sender");
 	DeclareParameterPosition(g_position, 2, "Position", "pos");
@@ -201,6 +249,20 @@ HRESULT __stdcall SpoutReceiverPlugin::OnGetPluginInfo(TVdjPluginInfo8 *infos)
 
 HRESULT __stdcall SpoutReceiverPlugin::OnStart()
 {
+	// Initialize again in case OnDeviceClose was called
+	// Noted for toggle of main window
+	if (!pImmediateContext) {
+		HRESULT hr = InitializeDraw();
+		if (hr == NO_ERROR) {
+			bIsClosing = false; // is not closing
+			bSpoutOut = true; // we can receive and draw
+		}
+		else {
+			bSpoutOut = false; // we can't draw
+			return hr;
+		}
+	}
+
 	bSpoutOut = true;
 	return NO_ERROR;
 }
@@ -320,6 +382,9 @@ bool SpoutReceiverPlugin::UpdateVertices()
 
 	pImmediateContext->Unmap(pVertexBuffer, NULL);
 
+	oldWidth = width;
+	oldHeight = height;
+
 	return true;
 }
 
@@ -327,10 +392,26 @@ bool SpoutReceiverPlugin::UpdateVertices()
 HRESULT __stdcall  SpoutReceiverPlugin::OnDeviceInit() 
 {
 	bIsClosing = false; // is not closing
+	// Set everything up for draw
+	return InitializeDraw();
+}
+
+
+HRESULT SpoutReceiverPlugin::InitializeDraw()
+{
+	SafeRelease(&pVertexBuffer);
+	SafeRelease(&pPixelShader);
+	SafeRelease(&pSRView);
+	SafeRelease(&pImmediateContext);
+	pDevice = nullptr;
+
 
 	HRESULT hr = GetDevice(VdjVideoEngineDirectX11, (void**)&pDevice);
 	if (hr != S_OK)
+	{
+		SpoutLogWarning("SpoutReceiverPlugin::InitializeDraw() - VirtualDJ GetDevice failed");
 		return E_FAIL;
+	}
 
 	pDevice->GetImmediateContext(&pImmediateContext);
 	if (!pImmediateContext)
@@ -343,8 +424,8 @@ HRESULT __stdcall  SpoutReceiverPlugin::OnDeviceInit()
 	bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 	pDevice->CreateBuffer(&bd, NULL, &pVertexBuffer);
 
-	oldWidth = width;
-	oldHeight = height;
+	//oldWidth = width;
+	//oldHeight = height;
 
 	UpdateVertices();
 
@@ -359,7 +440,7 @@ HRESULT __stdcall SpoutReceiverPlugin::OnDeviceClose()
 	// Re-init does not seem to affect it
 
 	bIsClosing = true; // It is closing to don't do anything in draw
-
+	/*
 	if (pVertexBuffer)
 	{
 		pVertexBuffer->Release();
@@ -386,18 +467,46 @@ HRESULT __stdcall SpoutReceiverPlugin::OnDeviceClose()
 		pImmediateContext = nullptr;
 	}
 	pDevice = nullptr;
+	*/
+	// Release everything
+	
+	SafeRelease(&g_pTexture);
+	SafeRelease(&g_pSharedTexture);
+	g_SenderName[0] = 0;
+	g_SenderWidth = 0;
+	g_SenderHeight = 0;
+	g_dxShareHandle = NULL;
+	frame.CloseAccessMutex();
+	frame.CleanupFrameCount();
+	bSpoutInitialized = false;
+
+	SafeRelease(&pVertexBuffer);
+	SafeRelease(&pPixelShader);
+	SafeRelease(&pSRView);
+	SafeRelease(&pImmediateContext);
+	pDevice = nullptr;
 
 	return S_OK;
 }
 
 ULONG __stdcall SpoutReceiverPlugin::Release()
 {
-	g_pSharedTexture = nullptr;
+	SafeRelease(&g_pTexture);
+	SafeRelease(&g_pSharedTexture);
 	g_dxShareHandle = NULL;
 	g_SenderName[0] = 0;
 	g_SenderWidth = 0;
 	g_SenderHeight = 0;
+	frame.CloseAccessMutex();
+	frame.CleanupFrameCount();
 	bSpoutInitialized = false;
+
+	SafeRelease(&pVertexBuffer);
+	SafeRelease(&pPixelShader);
+	SafeRelease(&pSRView);
+	SafeRelease(&pImmediateContext);
+	pDevice = nullptr;
+
 	bSpoutOut = false;
 
 	delete this; 
@@ -421,11 +530,13 @@ HRESULT __stdcall SpoutReceiverPlugin::OnDraw()
 		return S_FALSE;
 
 	if (bSpoutOut) {
+// For now update everytime for position matching
+//		if (oldWidth != width || oldHeight != height) {
+			UpdateVertices();
+//		}
 
 		if (ReceiveSpoutTexture() && bSpoutInitialized && g_pTexture && pImmediateContext && pSRView) {
 			// A local texture, g_pTexture, has been updated
-//			if (oldWidth != width || oldHeight != height)
-				UpdateVertices();
 			// Activate local shader
 			pImmediateContext->PSSetShader(pPixelShader, nullptr, 0);
 			// Bind our texture shader resource view
@@ -462,20 +573,35 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 			frame.CloseAccessMutex();
 			frame.CleanupFrameCount();
 		}
-		g_pSharedTexture = nullptr; // The shared texture is different
+		// Release the local one to re-create
+		SafeRelease(&g_pTexture);
+		SafeRelease(&g_pSharedTexture); // The shared texture is different
 		g_dxShareHandle = NULL; // And the share handle
 		// The local texture is only resized if the sender size has changed
 		bSpoutInitialized = false;
-		// A sender has been selected, so continue
+		// A new sender has been selected, so continue
 	}
 
 	// Find if the sender exists and return width, height, sharehandle and format.
 	if (spoutsender.FindSender(g_SenderName, senderwidth, senderheight, g_dxShareHandle, g_dwFormat)) {
-		
-		// Don't receive from VDJ itself or master
-		if (strcmp(g_SenderName, g_noReceiveName) == 0 || strcmp(g_SenderName, "VDJSpoutSender64 master") == 0) {
-			g_SenderName[0] = 0;
+		// printf("FindSender %s, %dx%d\n", m_SenderName, senderwidth, senderheight);
+
+		// It's possible that the sharehandle could be null
+		// for a 2.006 sender using shared memory instead of a shared texture
+		if (!g_dxShareHandle)
 			return false;
+
+		// Don't receive from VDJ itself or master
+		if (strncmp(g_SenderName, "VDJSpoutSender64", 16) == 0) {
+			char* s = g_SenderName+16;
+			if (*s == 0 || 
+				strcmp(g_SenderName, g_noReceiveName) == 0 ||
+				strcmp(g_SenderName, (std::string(g_noReceiveName) + "_Release").c_str()) == 0 ||
+				strncmp(s, " deck Master",12) == 0
+				) {
+					g_SenderName[0] = 0;
+				return false;
+			}
 		}
 
 		// Check here for sender size changes to resize the local texture
@@ -484,14 +610,34 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 			// Save the sender's width and height to use as necessary
 			g_SenderWidth = senderwidth;
 			g_SenderHeight = senderheight;
+
+			// Release any existing shared texture pointer
+			// so it can be created again from the new share handle
+			SafeRelease(&g_pSharedTexture);
+
+			// Existing local texture must be released and re-created to the new size
 			if (pDevice) {
+				SafeRelease(&g_pTexture);
+				// DX9
+				// 21 - D3DFMT_A8R8G8B8
+				// 22 - D3DFMT_X8R8G8B8
+				// DX11
+				// 28 - DXGI_FORMAT_R8G8B8A8_UNORM
+				// 87 - DXGI_FORMAT_B8G8R8A8_UNORM
+				// 88 - DXGI_FORMAT_B8G8R8AX_UNORM (untested)
+				// 02 - DXGI_FORMAT_R32G32B32A32_FLOAT
+				// 10 - DXGI_FORMAT_R16G16B16A16_FLOAT
+				// 13 - DXGI_FORMAT_R16G16B16A16_SNORM
+				// 24 - DXGI_FORMAT_R10G10B10A2_UNORM
 
-				// Existing texture must be released
-				if(g_pTexture) g_pTexture->Release();
-				g_pTexture = nullptr;
-
-				CreateDX11Texture(pDevice, g_SenderWidth, g_SenderHeight, DXGI_FORMAT_B8G8R8A8_UNORM, &g_pTexture);
-
+				// DX9 formats are not supported for creation of a DX11 shader resource view
+				// so use the default DXGI_FORMAT_B8G8R8A8_UNORM.
+				// Otherwise DX11 formats will be detected correctly.
+				// TODO : test other than DX11 RGBA
+				if (g_dwFormat == (DWORD)D3DFMT_A8R8G8B8 || g_dwFormat == (DWORD)D3DFMT_X8R8G8B8)
+					CreateDX11Texture(pDevice, g_SenderWidth, g_SenderHeight, DXGI_FORMAT_B8G8R8A8_UNORM, &g_pTexture);
+				else
+					CreateDX11Texture(pDevice, g_SenderWidth, g_SenderHeight, (DXGI_FORMAT)g_dwFormat, &g_pTexture);
 			}
 			else {
 				printf("GetDevice failed\n");
@@ -509,6 +655,11 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 			frame.EnableFrameCount(g_SenderName);
 			bSpoutInitialized = true;
 		}
+		// If no sender shared texture pointer, create one from the share handle
+		if (!g_pSharedTexture) {
+			// Open the shared texture
+			spoutdx.OpenDX11shareHandle(pDevice, &g_pSharedTexture, g_dxShareHandle);
+		}
 
 		// Access the sender shared texture
 		// When it gets access and the frame is new
@@ -517,18 +668,19 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 		if (frame.CheckAccess()) {
 			// Check if the sender has produced a new frame
 			if (frame.GetNewFrame() && pDevice) {
-				// Get the VirtualDJ DX11 device
-				// g_dxShareHandle was retrieved from the sender
+				// m_dxShareHandle was retrieved from the sender
+				// and the shared texture pointer (m_pSharedTexture) has been retrieved via the sharehandle
 				// The shared texture pointer can be retrieved via the sharehandle
-				if (spoutdx.OpenDX11shareHandle(pDevice, &g_pSharedTexture, g_dxShareHandle)) {
+//				if (spoutdx.OpenDX11shareHandle(pDevice, &g_pSharedTexture, g_dxShareHandle)) {
 					// Now copy the shared texture to the local texture which will be the same size
 					if (g_pTexture && g_pSharedTexture && pImmediateContext) {
 							pImmediateContext->CopyResource(g_pTexture, g_pSharedTexture);
 							// The shared texture has been updated on this device
 							// so flush must be called on this device
-							pImmediateContext->Flush();
+//							pImmediateContext->Flush();
+					// No need to flush because the shared texture is not modified on this device
 					}
-				}
+//				}
 			}
 			// Allow access to the shared texture
 			frame.AllowAccess();
@@ -543,7 +695,7 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 			// Zero the name to get the active sender if it is running
 			g_SenderName[0] = 0;
 			// No need to reset the size or re-create the local texture
-			g_pSharedTexture = nullptr; // The shared texture no longer exists
+			SafeRelease(&g_pSharedTexture); // The shared texture no longer exists
 			g_dxShareHandle = NULL; // Or the share handle
 			// Close the named access mutex and frame counting
 			frame.CloseAccessMutex();
@@ -578,6 +730,9 @@ bool SpoutReceiverPlugin::CreateDX11Texture(ID3D11Device* pd3dDevice,
 
 	SpoutLogNotice("SpoutReceiverPlugin::CreateDX11Texture");
 	SpoutLogNotice("    pDevice = 0x%Ix, width = %d, height = %d, format = %d", (intptr_t)pd3dDevice, width, height, format);
+
+	// printf("SpoutReceiverPlugin::CreateDX11Texture\n");
+	// printf("    pd3dDevice = 0x%Ix, width = %d, height = %d, format = %d\n", (intptr_t)pd3dDevice, width, height, format);
 
 	// Create a new DX11 texture
 	D3D11_TEXTURE2D_DESC desc;
@@ -619,19 +774,16 @@ bool SpoutReceiverPlugin::CreateDX11Texture(ID3D11Device* pd3dDevice,
 
 	D3D11_SHADER_RESOURCE_VIEW_DESC srdesc;
 	ZeroMemory(&srdesc, sizeof(srdesc));
-	srdesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // Matching format is important
+	srdesc.Format = texformat; // Matching format is important
 	srdesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	srdesc.Texture2D.MostDetailedMip = 0;
 	srdesc.Texture2D.MipLevels = 1;
-	if (pSRView)
-	{
-		pSRView->Release();
-		pSRView = nullptr;
-	}
-
+	SafeRelease(&pSRView);
+	
 	res = pDevice->CreateShaderResourceView(pTexture, &srdesc, &pSRView);
 	if (res != S_OK)
 	{
+		SpoutLogWarning("SpoutReceiverPlugin::CreateDX11Texture - could not create shader resouce view");
 	}
 	// Return the DX11 texture pointer
 	*ppTexture = pTexture;
