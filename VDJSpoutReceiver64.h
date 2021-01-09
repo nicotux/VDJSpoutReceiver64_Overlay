@@ -63,10 +63,10 @@ private:
 	bool bIsClosing; // Plugin is closing
 
 	int deck; // Our working deck
-	char g_ReceiverName[256] = ""; // Our name
-	char g_noReceiveName[256] = ""; // Receiver not allowed
+	char g_ReceiverName[SpoutMaxSenderNameLen] = ""; // Our name
+	char g_noReceiveName[SpoutMaxSenderNameLen] = ""; // Receiver not allowed
 
-	char g_SenderName[256]; // The sender name
+	char g_SenderName[SpoutMaxSenderNameLen]; // The sender name
 	unsigned int g_SenderWidth; // Width and height of the sender detected
 	unsigned int g_SenderHeight;
 	DWORD g_SenderFormat;

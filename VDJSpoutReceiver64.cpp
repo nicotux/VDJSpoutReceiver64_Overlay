@@ -177,7 +177,11 @@ SpoutReceiverPlugin::SpoutReceiverPlugin()
 {
 	// Enable logging to show Spout logs
 	// Log file saved in AppData>Roaming>Spout
-	EnableSpoutLogFile("VDJSpoutReceiver64.log");
+	if (GetDLLDir().find("\\Visualisations"))
+		EnableSpoutLogFile("VDJSpoutReceiver64.log");
+	else
+		EnableSpoutLogFile("VDJSpoutOverlay64.log");
+
 	SetSpoutLogLevel(SPOUT_LOG_WARNING); // show only warnings and errors
 	// OpenSpoutConsole(); // For debugging
 
@@ -234,19 +238,22 @@ HRESULT __stdcall SpoutReceiverPlugin::OnLoad()
 	return NO_ERROR;
 }
 
-HRESULT __stdcall SpoutReceiverPlugin::OnGetPluginInfo(TVdjPluginInfo8 *infos)
+HRESULT __stdcall SpoutReceiverPlugin::OnGetPluginInfo(TVdjPluginInfo8* infos)
 {
 	infos->Author = "Lynn Jarvis";
 
 	infos->PluginName = g_ReceiverName;
-	infos->Description = (char*)"Receives frames from a Spout Sender\nas a visualisation plugin\nSpout : http://Spout.zeal.co/";
-	infos->Version = (char *)"v2.01n";
-    infos->Bitmap = NULL;
-//	if (deck == 0)
+	infos->Version = (char*)"v2.01n";
+	infos->Bitmap = NULL;
+	if (GetDLLDir().find("\\Visualisations") == std::string::npos) {
+		infos->Description = (char*)"Receives frames from a Spout Sender\nas a visualisation plugin\nSpout : http://Spout.zeal.co/";
+		infos->Flags = VDJFLAG_VIDEO_VISUALISATION | VDJFLAG_VIDEO_OUTPUTRESOLUTION;
+	}
+	else {
+		infos->Description = (char*)"Receives frames from a Spout Sender\nas an overlay plugin\nSpout : http://Spout.zeal.co/";
 		infos->Flags = VDJFLAG_VIDEO_OVERLAY | VDJFLAG_VIDEO_OUTPUTRESOLUTION;
-//	else
-//		infos->Flags = VDJFLAG_VIDEO_VISUALISATION | VDJFLAG_VIDEO_OUTPUTRESOLUTION;
-    return NO_ERROR;
+	}
+	return NO_ERROR;
 }
 
 
@@ -256,17 +263,14 @@ HRESULT __stdcall SpoutReceiverPlugin::OnStart()
 	// Noted for toggle of main window
 	if (!pImmediateContext) {
 		HRESULT hr = InitializeDraw();
-		if (hr == NO_ERROR) {
-			bIsClosing = false; // is not closing
-			bSpoutOut = true; // we can receive and draw
-		}
-		else {
+		if (hr != NO_ERROR) {
 			bSpoutOut = false; // we can't draw
 			return hr;
 		}
+		bIsClosing = false; // is not closing
 	}
 
-	bSpoutOut = true;
+	bSpoutOut = true; // we can receive and draw
 	return NO_ERROR;
 }
 
@@ -276,57 +280,6 @@ HRESULT __stdcall SpoutReceiverPlugin::OnStop()
 	return NO_ERROR;
 }
 
-/*bool SpoutReceiverPlugin::UpdateVertices()
-{
-	D3D11_MAPPED_SUBRESOURCE ms;
-	HRESULT hr = pImmediateContext->Map(pVertexBuffer, NULL, D3D11_MAP_WRITE_DISCARD, NULL, &ms);
-	if (hr != S_OK)
-		return false;
-
-	TLVERTEX* vertices = (TLVERTEX*)ms.pData;
-
-	const D3DXCOLOR color = D3DXCOLOR(1.f, 1.f, 1.f, 1.f);
-	vertices[0].colour = color;
-	vertices[0].x = (FLOAT)width;
-	vertices[0].y = 0;
-	vertices[0].z = 0.0f;
-
-	vertices[1].colour = color;
-	vertices[1].x = (FLOAT)width;
-	vertices[1].y = (FLOAT)height;
-	vertices[1].z = 0.0f;
-
-	vertices[2].colour = color;
-	vertices[2].x = 0;
-	vertices[2].y = (FLOAT)height;
-	vertices[2].z = 0.0f;
-
-	vertices[3].colour = color;
-	vertices[3].x = 1;
-	vertices[3].y = (FLOAT)height;
-	vertices[3].z = 0.0f;
-
-	vertices[4].colour = color;
-	vertices[4].x = 0;
-	vertices[4].y = 0;
-	vertices[4].z = 0.0f;
-
-	vertices[5].colour = color;
-	vertices[5].x = (FLOAT)width;
-	vertices[5].y = 0;
-	vertices[5].z = 0.0f;
-
-	vertices[0].u = 1.0f; vertices[0].v = 0.0f;
-	vertices[1].u = 1.0f; vertices[1].v = 1.0f;
-	vertices[2].u = 0.0f; vertices[2].v = 1.0f;
-	vertices[3].u = 0.0f; vertices[3].v = 1.0f;
-	vertices[4].u = 0.0f; vertices[4].v = 0.0f;
-	vertices[5].u = 1.0f; vertices[5].v = 0.0f;
-
-	pImmediateContext->Unmap(pVertexBuffer, NULL);
-
-	return true;
-}*/
 bool SpoutReceiverPlugin::UpdateVertices()
 {
 	D3D11_MAPPED_SUBRESOURCE ms;
@@ -427,9 +380,6 @@ HRESULT SpoutReceiverPlugin::InitializeDraw()
 	bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 	pDevice->CreateBuffer(&bd, NULL, &pVertexBuffer);
 
-	//oldWidth = width;
-	//oldHeight = height;
-
 	UpdateVertices();
 
 	pDevice->CreatePixelShader(PixelShaderCode, sizeof(PixelShaderCode) , nullptr, &pPixelShader);
@@ -467,24 +417,9 @@ HRESULT __stdcall SpoutReceiverPlugin::OnDeviceClose()
 
 ULONG __stdcall SpoutReceiverPlugin::Release()
 {
-	SafeRelease(&g_pTexture);
-	SafeRelease(&g_pSharedTexture);
-	g_dxShareHandle = NULL;
-	g_SenderName[0] = 0;
-	g_SenderWidth = 0;
-	g_SenderHeight = 0;
-	g_SenderFormat = 0;
-	frame.CloseAccessMutex();
-	frame.CleanupFrameCount();
-	bSpoutInitialized = false;
-
-	SafeRelease(&pVertexBuffer);
-	SafeRelease(&pPixelShader);
-	SafeRelease(&pSRView);
-	SafeRelease(&pImmediateContext);
-	pDevice = nullptr;
-
 	bSpoutOut = false;
+
+	OnDeviceClose();
 
 	delete this; 
 	return S_OK;
@@ -494,8 +429,12 @@ ULONG __stdcall SpoutReceiverPlugin::Release()
 HRESULT __stdcall SpoutReceiverPlugin::OnParameter(int ParamID) 
 {
 	// Activate SpoutPanel to select a sender
-	if (ParamID == 1)
+	if (ParamID == 1 && SelectButton == 0)
 		OpenSpoutPanel();
+	else
+	if (ParamID == 2)
+		UpdateVertices();
+
 	return S_OK;
 }
 
@@ -506,25 +445,24 @@ HRESULT __stdcall SpoutReceiverPlugin::OnDraw()
 	if (bIsClosing)
 		return S_FALSE;
 
-	if (bSpoutOut) {
-// For now update everytime for position matching
-//		if (oldWidth != width || oldHeight != height) {
-			UpdateVertices();
-//		}
+	if (!bSpoutOut)
+		return S_OK;
 
-		if (ReceiveSpoutTexture() && bSpoutInitialized && g_pTexture && pImmediateContext && pSRView) {
-			// A local texture, g_pTexture, has been updated
-			// Activate local shader
-			pImmediateContext->PSSetShader(pPixelShader, nullptr, 0);
-			// Bind our texture shader resource view
-			pImmediateContext->PSSetShaderResources(0, 1, &pSRView);
-			// Draw the texture
-			stride = sizeof(TLVERTEX);
-			offset = 0;
-			pImmediateContext->IASetVertexBuffers(0, 1, &pVertexBuffer, &stride, &offset);
-			pImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			pImmediateContext->Draw(6, 0);
-		}
+	if (oldWidth != width || oldHeight != height)
+		UpdateVertices();
+
+	if (ReceiveSpoutTexture() && bSpoutInitialized && g_pTexture && pImmediateContext && pSRView) {
+		// A local texture, g_pTexture, has been updated
+		// Activate local shader
+		pImmediateContext->PSSetShader(pPixelShader, nullptr, 0);
+		// Bind our texture shader resource view
+		pImmediateContext->PSSetShaderResources(0, 1, &pSRView);
+		// Draw the texture
+		stride = sizeof(TLVERTEX);
+		offset = 0;
+		pImmediateContext->IASetVertexBuffers(0, 1, &pVertexBuffer, &stride, &offset);
+		pImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		pImmediateContext->Draw(6, 0);
 	}
 	// return S_OK if you actually draw the texture on the device
 	return S_OK;
@@ -545,6 +483,7 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 	if (CheckSpoutPanel(g_SenderName)) {
 		// The user has selected a different sender
 		// and the new name has been returned
+		// Don't receive from VDJ itself or master
 		if (bSpoutInitialized) {
 			// Close the named access mutex and frame counting
 			frame.CloseAccessMutex();
@@ -567,19 +506,6 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 		// for a 2.006 sender using shared memory instead of a shared texture
 		if (!g_dxShareHandle)
 			return false;
-
-		// Don't receive from VDJ itself or master
-		if (strncmp(g_SenderName, "VDJSpoutSender64", 16) == 0) {
-			char* s = g_SenderName+16;
-			if (*s == 0 || 
-				strcmp(g_SenderName, g_noReceiveName) == 0 ||
-				strcmp(g_SenderName, (std::string(g_noReceiveName) + "_Release").c_str()) == 0 ||
-				strncmp(s, " deck Master",12) == 0
-				) {
-					g_SenderName[0] = 0;
-				return false;
-			}
-		}
 
 		// Check here for sender size changes to resize the local texture
 		// or create one if it does not exist yet
@@ -654,17 +580,14 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 			if (frame.GetNewFrame() && pDevice) {
 				// m_dxShareHandle was retrieved from the sender
 				// and the shared texture pointer (m_pSharedTexture) has been retrieved via the sharehandle
-				// The shared texture pointer can be retrieved via the sharehandle
-//				if (spoutdx.OpenDX11shareHandle(pDevice, &g_pSharedTexture, g_dxShareHandle)) {
 					// Now copy the shared texture to the local texture which will be the same size
-					if (g_pTexture && g_pSharedTexture && pImmediateContext) {
-							pImmediateContext->CopyResource(g_pTexture, g_pSharedTexture);
-							// The shared texture has been updated on this device
-							// so flush must be called on this device
+				if (g_pTexture && g_pSharedTexture && pImmediateContext) {
+					pImmediateContext->CopyResource(g_pTexture, g_pSharedTexture);
+					// The shared texture has been updated on this device
+					// so flush must be called on this device
 //							pImmediateContext->Flush();
 					// No need to flush because the shared texture is not modified on this device
-					}
-//				}
+				}
 			}
 			// Allow access to the shared texture
 			frame.AllowAccess();
@@ -673,21 +596,21 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 		return true;
 
 	} // sender exists
-	else {
-		if (bSpoutInitialized) {
-			// The connected sender closed
-			// Zero the name to get the active sender if it is running
-			g_SenderName[0] = 0;
-			// No need to reset the size or re-create the local texture
-			SafeRelease(&g_pSharedTexture); // The shared texture no longer exists
-			g_dxShareHandle = NULL; // Or the share handle
-			// Close the named access mutex and frame counting
-			frame.CloseAccessMutex();
-			frame.CleanupFrameCount();
-			// Initialize them again when a sender is found
-			bSpoutInitialized = false;
-		}
+
+	if (bSpoutInitialized) {
+		// The connected sender closed
+		// Zero the name to get the active sender if it is running
+		g_SenderName[0] = 0;
+		// No need to reset the size or re-create the local texture
+		SafeRelease(&g_pSharedTexture); // The shared texture no longer exists
+		g_dxShareHandle = NULL; // Or the share handle
+		// Close the named access mutex and frame counting
+		frame.CloseAccessMutex();
+		frame.CleanupFrameCount();
+		// Initialize them again when a sender is found
+		bSpoutInitialized = false;
 	}
+
 	return false;
 
 }
@@ -830,6 +753,16 @@ bool SpoutReceiverPlugin::CheckSpoutPanel(char *sendername, int maxchars)
 						}
 					}
 					// Now do we have a valid sender name ?
+					if (strncmp(newname, "VDJSpoutSender64", 16) == 0) {
+						char* n = newname + 16;
+						if (*n == 0 ||
+							strcmp(newname, g_noReceiveName) == 0 ||
+							strcmp(newname, (std::string(g_noReceiveName) + "_Release").c_str()) == 0 ||
+							strncmp(n, " deck Master", 12) == 0
+						) {
+							newname[0] = 0;
+						}
+					}
 					if (newname[0] != 0) {
 						// Pass back the new name
 						strcpy_s(sendername, maxchars, newname);
