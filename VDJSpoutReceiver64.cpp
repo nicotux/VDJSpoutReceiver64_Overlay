@@ -598,8 +598,11 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 			if (pDevice) {
 				SafeRelease(&g_pTexture);
 				// DX9
+				// 20 - D3DFMT_R8G8B8
 				// 21 - D3DFMT_A8R8G8B8
 				// 22 - D3DFMT_X8R8G8B8
+				// 32 - D3DFMT_A8B8G8R8
+				// 33 - D3DFMT_X8B8G8R8
 				// DX11
 				// 28 - DXGI_FORMAT_R8G8B8A8_UNORM
 				// 87 - DXGI_FORMAT_B8G8R8A8_UNORM
@@ -613,7 +616,9 @@ bool SpoutReceiverPlugin::ReceiveSpoutTexture()
 				// so use the default DXGI_FORMAT_B8G8R8A8_UNORM.
 				// Otherwise DX11 formats will be detected correctly.
 				// TODO : test other than DX11 RGBA
-				if (g_dwFormat == (DWORD)D3DFMT_A8R8G8B8 || g_dwFormat == (DWORD)D3DFMT_X8R8G8B8)
+				if (g_dwFormat == (DWORD)D3DFMT_A8R8G8B8 || g_dwFormat == (DWORD)D3DFMT_X8R8G8B8
+					|| g_dwFormat == (DWORD)D3DFMT_A8B8G8R8 || g_dwFormat == (DWORD)D3DFMT_X8B8G8R8
+					|| g_dwFormat == (DWORD)D3DFMT_R8G8B8)
 					CreateDX11Texture(pDevice, g_SenderWidth, g_SenderHeight, DXGI_FORMAT_B8G8R8A8_UNORM, &g_pTexture);
 				else
 					CreateDX11Texture(pDevice, g_SenderWidth, g_SenderHeight, (DXGI_FORMAT)g_dwFormat, &g_pTexture);
